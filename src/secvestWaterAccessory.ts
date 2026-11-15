@@ -19,15 +19,16 @@ export class SecvestWaterAccessory {
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'ABUS')
       .setCharacteristic(this.platform.Characteristic.Model, 'Wassermelder')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.id);
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, `secvest-${accessory.context.device.id}`);
 
     this.service = this.accessory.getService(this.platform.Service.LeakSensor)
       || this.accessory.addService(this.platform.Service.LeakSensor);
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
+    this.service.updateCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
 
     const sd = this.platform.Characteristic.LeakDetected;
     const defaultState = sd.LEAK_NOT_DETECTED;
-    this.service.setCharacteristic(sd, defaultState);
+    // Kein Startwert setzen: Homebridge stellt den letzten Zustand aus dem Cache wieder her,
+    // und setupAccessories() meldet direkt danach den aktuellen Secvest-Zustand.
 
     accessory.context.update = (device) => {
       let newState = defaultState;
@@ -37,7 +38,7 @@ export class SecvestWaterAccessory {
       }
 
       this.platform.log.debug('set LeakDetected (' + device.name + '): ' + newState);
-      this.service.setCharacteristic(sd, newState);
+      this.service.updateCharacteristic(sd, newState);
     };
   }
 }

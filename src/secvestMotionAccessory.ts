@@ -18,16 +18,16 @@ export class SecvestMotionAccessory {
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'ABUS')
       .setCharacteristic(this.platform.Characteristic.Model, 'Bewegungsmelder')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.id);
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, `secvest-${accessory.context.device.id}`);
 
     this.service = this.accessory.getService(this.platform.Service.MotionSensor)
       || this.accessory.addService(this.platform.Service.MotionSensor);
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
+    this.service.updateCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
 
     accessory.context.update = (device) => {
       const newState = (device.state === 'open');
       this.platform.log.debug(`set MotionDetected (${device.name}): ${newState}`);
-      this.service.setCharacteristic(this.platform.Characteristic.MotionDetected, newState);
+      this.service.updateCharacteristic(this.platform.Characteristic.MotionDetected, newState);
     };
   }
 }

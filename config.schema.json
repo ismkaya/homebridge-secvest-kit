@@ -79,11 +79,20 @@
           }
         }
       },
-      "pollingInterval": {
-        "title": "Polling interval in minutes",
+      "pollingIntervalSeconds": {
+        "title": "Polling interval in seconds",
+        "description": "How often the Secvest is queried (minimum 10 seconds). Overrides the deprecated 'pollingInterval' (minutes).",
         "type": "integer",
-        "required": true,
-        "default": "1"
+        "required": false,
+        "default": 30,
+        "minimum": 10
+      },
+      "pollingInterval": {
+        "title": "Polling interval in minutes (deprecated)",
+        "description": "Deprecated: use 'pollingIntervalSeconds' instead. Only used if 'pollingIntervalSeconds' is not set.",
+        "type": "integer",
+        "required": false,
+        "minimum": 1
       },
       "pushover": {
         "title": "Pushover Configuration",
