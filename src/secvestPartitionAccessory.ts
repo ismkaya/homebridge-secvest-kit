@@ -18,44 +18,53 @@ export class SecvestPartitionAccessory {
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'ABUS')
       .setCharacteristic(this.platform.Characteristic.Model, 'Secvest Partition')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.id);
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, `secvest-${accessory.context.device.id}`);
 
     this.service = accessory.getService(this.platform.Service.SecuritySystem)
       || accessory.addService(this.platform.Service.SecuritySystem);
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
+    this.service.updateCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
 
     const ssts = this.platform.Characteristic.SecuritySystemTargetState;
     const sscs = this.platform.Characteristic.SecuritySystemCurrentState;
-    this.service.setCharacteristic(ssts, ssts.DISARM);
-    this.service.setCharacteristic(sscs, sscs.DISARMED);
+    // Kein Startwert setzen: Homebridge stellt den letzten Zustand aus dem Cache wieder her,
+    // und setupAccessories() meldet direkt danach den aktuellen Secvest-Zustand.
 
-    this.service.getCharacteristic(this.platform.Characteristic.SecuritySystemTargetState)
+    // Ist-Zustand aus Soll-Zustand und tatsächlichem Secvest-Zustand ableiten
+    const currentFor = (targetState: CharacteristicValue, deviceState: string) => {
+      if (targetState === ssts.STAY_ARM && deviceState === 'partset') {
+        return sscs.STAY_ARM;
+      }
+      if (targetState === ssts.AWAY_ARM && deviceState === 'set') {
+        return sscs.AWAY_ARM;
+      }
+      return sscs.DISARMED;
+    };
+
+    // Befehl aus der Home-App (das Plugin schaltet die Secvest nicht, es spiegelt nur den Zustand)
+    this.service.getCharacteristic(ssts)
       .onSet(async (targetState: CharacteristicValue) => {
         const device = this.accessory.context.device;
-        let newState = sscs.DISARMED;
-
-        if (targetState === ssts.STAY_ARM && device.state === 'partset') {
-          newState = sscs.STAY_ARM;
-        } else if (targetState === ssts.AWAY_ARM && device.state === 'set') {
-          newState = sscs.AWAY_ARM;
-        }
-
-        this.platform.log.debug('set SecuritySystemCurrentState (' + this.accessory.context.device.name + '):' +
+        const newState = currentFor(targetState, device.state);
+        this.platform.log.debug('set SecuritySystemCurrentState (' + device.name + '):' +
           ' target(' + targetState + '), device (' + device.state + '), new(' + newState + ')');
-        this.service.setCharacteristic(sscs, newState);
+        this.service.updateCharacteristic(sscs, newState);
       });
 
+    // Zustand aus der Secvest an HomeKit melden
     accessory.context.update = (device) => {
-      let newState = ssts.DISARM;
-
+      let targetState = ssts.DISARM;
       if (device.state === 'partset') {
-        newState = ssts.STAY_ARM;
+        targetState = ssts.STAY_ARM;
       } else if (device.state === 'set') {
-        newState = ssts.AWAY_ARM;
+        targetState = ssts.AWAY_ARM;
       }
+      const currentState = currentFor(targetState, device.state);
 
-      this.platform.log.debug('set SecuritySystemTargetState (' + device.name + '): ' + newState);
-      this.service.setCharacteristic(ssts, newState);
+      this.platform.log.debug('set SecuritySystemTargetState (' + device.name + '): ' + targetState);
+      this.service.updateCharacteristic(ssts, targetState);
+      this.platform.log.debug('set SecuritySystemCurrentState (' + device.name + '):' +
+        ' target(' + targetState + '), device (' + device.state + '), new(' + currentState + ')');
+      this.service.updateCharacteristic(sscs, currentState);
     };
   }
 }

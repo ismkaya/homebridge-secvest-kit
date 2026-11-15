@@ -19,60 +19,89 @@ export class SecvestContactAccessory {
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'ABUS')
       .setCharacteristic(this.platform.Characteristic.Model, 'Öffnungsmelder/Fenstergriffe')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, this.accessory.context.device.id);
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, `secvest-${this.accessory.context.device.id}`);
 
     this.service = this.accessory.getService(this.platform.Service.ContactSensor)
       || this.accessory.addService(this.platform.Service.ContactSensor);
-    this.service.setCharacteristic(this.platform.Characteristic.Name, this.accessory.context.device.name);
+    this.service.updateCharacteristic(this.platform.Characteristic.Name, this.accessory.context.device.name);
 
     const css = this.platform.Characteristic.ContactSensorState;
     const defaultState = css.CONTACT_NOT_DETECTED;
-    this.service.setCharacteristic(css, defaultState);
+    // Kein Startwert setzen: Homebridge stellt den letzten Zustand aus dem Cache wieder her,
+    // und setupAccessories() meldet direkt danach den aktuellen Secvest-Zustand.
 
     accessory.context.update = (device) => {
-      let newState;
-      const now = Date.now();
+      const isClosed = device.state === 'closed';
+      const newState = isClosed ? css.CONTACT_DETECTED : defaultState;
 
-      if (device.state === 'closed') {
-        newState = css.CONTACT_DETECTED;
-        this.accessory.context.opened = null;
-      } else {
-        newState = defaultState;
-        if (!this.accessory.context.opened) {
-          this.accessory.context.opened = now;
-          this.scheduleNotification();
-        }
-      }
-
-      if (this.accessory.context.opened && this.accessory.context.scheduledNotification) {
-        const openSinceMin = Math.round((now - this.accessory.context.opened)/60000);
-        const shouldSendNotification = openSinceMin >= this.platform.config.pushover.notificationDelay &&
-            now >= this.getScheduledNotification();
-
-        this.platform.log.debug(`${this.accessory.context.device.name} is open for ${openSinceMin} min ` +
-          `(notification will be send on ${new Date(this.getScheduledNotification()).toString()})`);
-
-        if (shouldSendNotification) {
-          this.sendNotification(`${this.accessory.context.device.name} ist seit ${openSinceMin} Minuten offen.`);
-          this.scheduleNotification();
-        }
-      }
-
+      // 1. Zustand IMMER zuerst an HomeKit melden – unabhängig von Benachrichtigungen
       this.platform.log.debug('set ContactSensorState (' + device.name + '): ' + newState);
-      this.service.setCharacteristic(css, newState);
+      this.service.updateCharacteristic(css, newState);
+
+      // 2. Optionale Pushover-Benachrichtigung; Fehler dürfen das Update nicht verhindern
+      try {
+        this.handleNotification(isClosed);
+      } catch (error) {
+        this.platform.log.warn(`Notification handling for ${device.name} failed:`,
+          error instanceof Error ? error.message : String(error));
+      }
     };
+  }
+
+  handleNotification(isClosed: boolean) {
+    const now = Date.now();
+
+    if (isClosed) {
+      this.accessory.context.opened = null;
+      this.accessory.context.scheduledNotification = null;
+      return;
+    }
+
+    if (!this.accessory.context.opened) {
+      this.accessory.context.opened = now;
+      this.scheduleNotification();
+    }
+
+    if (!this.isNotificationEnabled() || !this.accessory.context.scheduledNotification) {
+      return;
+    }
+
+    const openSinceMin = Math.round((now - this.accessory.context.opened) / 60000);
+    const shouldSendNotification = openSinceMin >= this.getNotificationDelay() &&
+        now >= this.getScheduledNotification();
+
+    this.platform.log.debug(`${this.accessory.context.device.name} is open for ${openSinceMin} min ` +
+      `(notification will be send on ${new Date(this.getScheduledNotification()).toString()})`);
+
+    if (shouldSendNotification) {
+      this.sendNotification(`${this.accessory.context.device.name} ist seit ${openSinceMin} Minuten offen.`);
+      this.scheduleNotification();
+    }
   }
 
   // NOTIFICATIONS
 
-  isNotificationEnabled() {
-    return this.platform.config.pushover &&
-           !this.platform.config.pushover.ignoredZones.includes(this.accessory.context.device.id);
+  /**
+   * Pushover ist nur aktiv, wenn user UND token gesetzt sind
+   * und die Zone nicht in ignoredZones steht.
+   */
+  isNotificationEnabled(): boolean {
+    const pushover = this.platform.config.pushover;
+    if (!pushover || !pushover.user || !pushover.token) {
+      return false;
+    }
+    const ignoredZones: number[] = Array.isArray(pushover.ignoredZones) ? pushover.ignoredZones.map(Number) : [];
+    return !ignoredZones.includes(Number(this.accessory.context.device.id));
+  }
+
+  getNotificationDelay(): number {
+    const delay = Number(this.platform.config.pushover?.notificationDelay);
+    return Number.isFinite(delay) && delay > 0 ? delay : 15;
   }
 
   scheduleNotification() {
     if (this.isNotificationEnabled()) {
-      this.accessory.context.scheduledNotification = Date.now() + this.platform.config.pushover.notificationDelay * 60000;
+      this.accessory.context.scheduledNotification = Date.now() + this.getNotificationDelay() * 60000;
     }
   }
 
@@ -96,7 +125,13 @@ export class SecvestContactAccessory {
         'Content-Type'  : 'application/json',
       },
     };
-    const req = request(options);
+    const req = request(options, (response) => {
+      if (response.statusCode !== 200) {
+        this.platform.log.warn(`Pushover returned HTTP ${response.statusCode}`);
+      }
+      response.resume();
+    });
+    req.on('error', (error) => this.platform.log.warn('Pushover request failed:', error.message));
     req.write(data);
     req.end();
   }
