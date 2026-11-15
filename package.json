@@ -1,7 +1,7 @@
 {
-  "displayName": "SecvestKit",
-  "name": "homebridge-secvest-kit",
-  "version": "0.1.0",
+  "displayName": "ABUS Secvest LarsSchneider by ismkaya",
+  "name": "homebridge-abus-secvest-larsschneider-by-ismkaya",
+  "version": "0.2.0",
   "description": "Make Abus Secvest devices available as Homekit accessories.",
   "license": "MIT",
   "repository": {
