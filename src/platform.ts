@@ -15,8 +15,20 @@ const DEFAULT_POLLING_SECONDS = 30;
 const MIN_POLLING_SECONDS = 10;
 // Maximale Wartezeit für eine einzelne HTTP-Anfrage an die Secvest
 const REQUEST_TIMEOUT_MS = 15000;
+// Erlaubte Gerätetypen für Zonen
+const ZONE_TYPES = ['contact', 'lock', 'motion', 'smoke', 'water'];
+
 // Wartezeit zwischen zwei Startversuchen, wenn die Secvest beim Start nicht erreichbar ist
 const DISCOVERY_RETRY_SECONDS = 30;
+
+/**
+ * HomeKit verlangt, dass ein Name mit einem Buchstaben oder einer Ziffer beginnt und endet
+ * (z. B. "Glas Wohnz." erzeugt sonst eine HAP-Warnung). Entfernt störende Zeichen an den Rändern.
+ */
+export function homeKitName(name: string): string {
+  const cleaned = String(name ?? '').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+  return cleaned || String(name ?? '');
+}
 
 /**
  * Ein Gerät der Secvest: entweder eine Zone (Melder) oder ein Teilbereich (Partition).
@@ -209,6 +221,34 @@ export class SecvestPlatform implements DynamicPlatformPlugin {
     this.accessories.push(accessory);
   }
 
+  /**
+   * Liest die Zuordnung Zone → Gerätetyp aus der Konfiguration.
+   * Neues Format (Liste):  "zoneTypes": [{ "zone": 202, "type": "lock" }]
+   * Altes Format (Objekt): "zoneTypes": { "202": "lock" }
+   * Ungültige Einträge werden mit Warnung ignoriert.
+   */
+  getZoneTypes(): Record<number, string> {
+    const result: Record<number, string> = {};
+    const raw = this.config.zoneTypes;
+    if (!raw) {
+      return result;
+    }
+
+    const entries: [unknown, unknown][] = Array.isArray(raw)
+      ? raw.map(e => [e?.zone, e?.type])
+      : Object.entries(raw);
+
+    for (const [zone, type] of entries) {
+      const id = Number(zone);
+      if (!Number.isInteger(id) || id < 201 || id > 299 || typeof type !== 'string' || !ZONE_TYPES.includes(type)) {
+        this.log.warn(`Ignoring invalid zone type entry: zone=${String(zone)}, type=${String(type)}`);
+        continue;
+      }
+      result[id] = type;
+    }
+    return result;
+  }
+
   async queryPartitions(): Promise<SecvestDevice[]> {
     const securityPartitions: number[] = this.config.securityPartitions || [];
     const data = await this.fetchJson('/system/partitions/');
@@ -218,21 +258,21 @@ export class SecvestPlatform implements DynamicPlatformPlugin {
         id: parseInt(z.id),
         uuid: this.api.hap.uuid.generate(`${UUID_SEED_PREFIX}-partition-${z.id}`),
         type: 'partition',
-        name: z.name,
+        name: homeKitName(z.name),
         state: z.state,
       }));
   }
 
   async queryZones(partition: number): Promise<SecvestDevice[]> {
-    const zoneTypes = this.config.zoneTypes || {};
+    const zoneTypes = this.getZoneTypes();
     const data = await this.fetchJson(`/system/partition-${partition}/zones/`);
     return data
       .filter(z => 200 < parseInt(z.id) && parseInt(z.id) < 300)
       .map(z => ({
         id: parseInt(z.id),
         uuid: this.api.hap.uuid.generate(`${UUID_SEED_PREFIX}-zone-${z.id}`),
-        type: zoneTypes[z.id] || 'contact',
-        name: z.name,
+        type: zoneTypes[parseInt(z.id)] || 'contact',
+        name: homeKitName(z.name),
         state: z.state,
       }));
   }
@@ -286,6 +326,35 @@ export class SecvestPlatform implements DynamicPlatformPlugin {
     }
   }
 
+  /**
+   * Entfernt Sensor-Services, die nicht zum aktuellen Gerätetyp passen.
+   * Nötig, wenn eine Zone den Typ wechselt (z. B. Kontakt → Schloss): Sonst bliebe
+   * der alte Service am Gerät hängen und HomeKit zeigt beide an.
+   */
+  removeStaleServices(accessory: PlatformAccessory, device: SecvestDevice) {
+    const S = this.Service;
+    const serviceForType = {
+      contact: S.ContactSensor,
+      lock: S.LockMechanism,
+      motion: S.MotionSensor,
+      partition: S.SecuritySystem,
+      smoke: S.SmokeSensor,
+      water: S.LeakSensor,
+    };
+    const wanted = serviceForType[device.type] || S.ContactSensor;
+
+    for (const serviceType of Object.values(serviceForType)) {
+      if (serviceType === wanted) {
+        continue;
+      }
+      const stale = accessory.getService(serviceType);
+      if (stale) {
+        this.log.info(`Changing type of ${device.name}: removing old ${stale.constructor.name || 'service'}`);
+        accessory.removeService(stale);
+      }
+    }
+  }
+
   setupAccessories(devices: SecvestDevice[]) {
     // loop over the discovered devices and register each one if it has not already been registered
     for (const device of devices) {
@@ -305,6 +374,16 @@ export class SecvestPlatform implements DynamicPlatformPlugin {
 
       // immer die frisch abgefragten Daten verwenden (nicht die aus dem Cache)
       accessory.context.device = device;
+
+      this.removeStaleServices(accessory, device);
+
+      // gespeicherten Namen an den bereinigten Namen angleichen (einmalig, wird im Cache gespeichert)
+      if (accessory.displayName !== device.name) {
+        this.log.info(`Renaming ${accessory.displayName} to ${device.name} (HomeKit naming rules)`);
+        accessory.updateDisplayName(device.name);
+      }
+      accessory.getService(this.Service.AccessoryInformation)
+        ?.updateCharacteristic(this.Characteristic.Name, device.name);
 
       switch (device.type) {
         case 'lock' : new SecvestLockAccessory(this, accessory); break;

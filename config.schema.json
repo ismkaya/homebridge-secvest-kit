@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "SecvestKit",
+  "pluginAlias": "AbusSecvestLarsSchneiderByIsmkaya",
   "pluginType": "platform",
   "singular": true,
   "schema": {
@@ -45,37 +45,56 @@
         }
       },
       "zoneTypes": {
-        "title": "Zone Types",
-        "type": "object",
-        "properties": {
-          "zone": {
-            "title": "Zone type",
-            "type": "string",
-            "oneOf": [{
-                "title": "lock",
-                "enum": [
-                  "lock"
-                ]
-              },
-              {
-                "title": "motion sensor",
-                "enum": [
-                  "motion"
-                ]
-              },
-              {
-                "title": "water sensor",
-                "enum": [
-                  "water"
-                ]
-              },
-              {
-                "title": "smoke sensor",
-                "enum": [
-                  "smoke"
-                ]
-              }
-            ]
+        "title": "Zone types",
+        "description": "Assign a HomeKit type to individual zones. Zones that are not listed appear as contact sensors.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "zone": {
+              "title": "Zone ID (201\u2013299)",
+              "type": "integer",
+              "minimum": 201,
+              "maximum": 299,
+              "required": true
+            },
+            "type": {
+              "title": "Type",
+              "type": "string",
+              "required": true,
+              "oneOf": [
+                {
+                  "title": "contact sensor",
+                  "enum": [
+                    "contact"
+                  ]
+                },
+                {
+                  "title": "lock",
+                  "enum": [
+                    "lock"
+                  ]
+                },
+                {
+                  "title": "motion sensor",
+                  "enum": [
+                    "motion"
+                  ]
+                },
+                {
+                  "title": "water sensor",
+                  "enum": [
+                    "water"
+                  ]
+                },
+                {
+                  "title": "smoke sensor",
+                  "enum": [
+                    "smoke"
+                  ]
+                }
+              ]
+            }
           }
         }
       },
@@ -123,7 +142,6 @@
             "type": "string",
             "required": true
           }
-
         }
       }
     }
